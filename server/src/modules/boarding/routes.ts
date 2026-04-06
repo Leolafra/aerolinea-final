@@ -1,15 +1,19 @@
 import { Router } from "express";
-import { requireRole } from "../../middleware/auth.js";
+import { z } from "zod";
+import { requireAuth, requirePermission } from "../../middleware/auth.js";
 import { recordAudit } from "../../lib/audit.js";
 import { store } from "../../lib/store.js";
+import { parseBody } from "../../lib/validation.js";
 
 export const boardingRouter = Router();
 
-boardingRouter.post("/", requireRole("ADMIN", "GATE_AGENT", "SUPERVISOR"), async (req, res) => {
-  const { bookingId, manualOverride = false } = req.body as {
-    bookingId: string;
-    manualOverride?: boolean;
-  };
+const boardingSchema = z.object({
+  bookingId: z.string().uuid("Reserva no valida."),
+  manualOverride: z.boolean().optional(),
+});
+
+boardingRouter.post("/", requireAuth, requirePermission("embarque.gestionar"), async (req, res) => {
+  const { bookingId, manualOverride = false } = parseBody(boardingSchema, req);
 
   const result = await store.board(bookingId, req.session.user!.employeeId, manualOverride);
   if ("error" in result) {

@@ -1,12 +1,19 @@
 import { Pool } from "pg";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { dirname, resolve } from "node:path";
 
 const DATABASE_URL = process.env.DATABASE_URL;
 const STATE_ROW_ID = "skybridge-state";
+const LOCAL_STATE_FILE = resolve(process.cwd(), "data", "app-state.json");
+
+function isPostgresUrl(value: string | undefined) {
+  return Boolean(value && (value.startsWith("postgres://") || value.startsWith("postgresql://")));
+}
 
 let pool: Pool | null = null;
 
 function getPool() {
-  if (!DATABASE_URL) {
+  if (!isPostgresUrl(DATABASE_URL)) {
     return null;
   }
 
@@ -21,13 +28,20 @@ function getPool() {
 }
 
 export function hasDatabase() {
-  return Boolean(DATABASE_URL);
+  return isPostgresUrl(DATABASE_URL);
 }
 
 export async function initPersistence(seedPayload: unknown) {
   const currentPool = getPool();
   if (!currentPool) {
-    return seedPayload;
+    try {
+      const content = await readFile(LOCAL_STATE_FILE, "utf8");
+      return JSON.parse(content);
+    } catch {
+      await mkdir(dirname(LOCAL_STATE_FILE), { recursive: true });
+      await writeFile(LOCAL_STATE_FILE, JSON.stringify(seedPayload, null, 2), "utf8");
+      return seedPayload;
+    }
   }
 
   await currentPool.query(`
@@ -54,6 +68,8 @@ export async function initPersistence(seedPayload: unknown) {
 export async function persistState(payload: unknown) {
   const currentPool = getPool();
   if (!currentPool) {
+    await mkdir(dirname(LOCAL_STATE_FILE), { recursive: true });
+    await writeFile(LOCAL_STATE_FILE, JSON.stringify(payload, null, 2), "utf8");
     return;
   }
 

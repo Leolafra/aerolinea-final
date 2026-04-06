@@ -15,11 +15,21 @@ import { auditRouter } from "../modules/audit/routes.js";
 import { settingsRouter } from "../modules/settings/routes.js";
 import { printingRouter } from "../modules/printing/routes.js";
 import { publicRouter } from "../modules/public/routes.js";
+import { customersRouter } from "../modules/customers/routes.js";
+import { messagesRouter } from "../modules/messages/routes.js";
+import { documentsRouter } from "../modules/documents/routes.js";
+import { incidentsRouter } from "../modules/incidents/routes.js";
+import { simulationRouter } from "../modules/simulation/routes.js";
 
 export const apiRouter = Router();
 
 apiRouter.use("/auth", authRouter);
 apiRouter.use("/public", publicRouter);
+apiRouter.use("/customers", customersRouter);
+apiRouter.use("/messages", messagesRouter);
+apiRouter.use("/documents", documentsRouter);
+apiRouter.use("/incidents", incidentsRouter);
+apiRouter.use("/simulation", simulationRouter);
 apiRouter.use("/dashboard", dashboardRouter);
 apiRouter.use("/employees", employeesRouter);
 apiRouter.use("/flights", flightsRouter);

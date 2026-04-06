@@ -14,6 +14,15 @@ const allowedOrigins = (process.env.ALLOWED_ORIGINS ?? process.env.CLIENT_ORIGIN
 const isProduction = process.env.NODE_ENV === "production";
 
 app.set("trust proxy", 1);
+app.disable("x-powered-by");
+
+app.use((req, res, next) => {
+  res.setHeader("X-Frame-Options", "DENY");
+  res.setHeader("X-Content-Type-Options", "nosniff");
+  res.setHeader("Referrer-Policy", "same-origin");
+  res.setHeader("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
+  next();
+});
 
 app.use(
   cors({
@@ -47,6 +56,24 @@ app.use(
 
 app.get("/health", (_req, res) => {
   res.json({ ok: true });
+});
+
+app.use((req, res, next) => {
+  const user = req.session.user;
+  const passwordChangeAllowed =
+    req.path === "/api/auth/change-password" ||
+    req.path === "/api/auth/logout" ||
+    req.path === "/api/auth/me" ||
+    req.path === "/health";
+
+  if (user?.forcePasswordChange && !passwordChangeAllowed) {
+    return res.status(428).json({
+      message: "Debe cambiar la contrasena antes de acceder al resto del sistema.",
+      code: "PASSWORD_CHANGE_REQUIRED",
+    });
+  }
+
+  next();
 });
 
 app.use("/api", apiRouter);

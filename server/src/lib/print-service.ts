@@ -5,16 +5,17 @@ export class PrintService {
     return [
       "\u001B@\n",
       "SKYBRIDGE ATLANTIC\n",
-      "BOARDING PASS\n",
+      "TARJETA DE EMBARQUE\n",
       "-----------------------------\n",
       `PAX: ${payload.passenger}\n`,
-      `FLT: ${payload.flightNumber}  ${payload.origin}-${payload.destination}\n`,
-      `DATE: ${payload.date}  GATE: ${payload.gate}\n`,
-      `SEAT: ${payload.seat}  CLASS: ${payload.cabinClass}\n`,
-      `LOC: ${payload.locator}\n`,
-      `STATUS: CHECK-IN COMPLETE\n`,
+      `VLO: ${payload.flightNumber}  ${payload.origin}-${payload.destination}\n`,
+      `FEC: ${payload.date}  PTA: ${payload.gate}\n`,
+      `ASI: ${payload.seat}  CAB: ${payload.cabinClass}\n`,
+      `LOC: ${payload.locator}  ZONA: ${payload.terminal ?? "N/D"}\n`,
+      `EST: CHECK-IN COMPLETADO\n`,
       "-----------------------------\n",
-      "VALID FOR BOARDING\n",
+      `BARCODE: ${payload.barcode ?? payload.locator}\n`,
+      "VALIDO PARA EMBARQUE\n",
       "\n\n\n",
       "\u001DV\u0001",
     ].join("");
@@ -24,32 +25,55 @@ export class PrintService {
     return [
       "\u001B@\n",
       "SKYBRIDGE ATLANTIC\n",
-      "BAGGAGE RECEIPT\n",
+      "RESGUARDO DE EQUIPAJE\n",
       "-----------------------------\n",
       `PAX: ${payload.passenger}\n`,
-      `FLT: ${payload.flightNumber}\n`,
-      `BAG TAG: ${payload.bagTag}\n`,
-      `PCS: ${payload.pieces}  KG: ${payload.weight}\n`,
-      `EXCESS EUR: ${payload.excessFee}\n`,
+      `VLO: ${payload.flightNumber}\n`,
+      `ETIQUETA: ${payload.bagTag}\n`,
+      `PZS: ${payload.pieces}  KG: ${payload.weight}\n`,
+      `EXCESO EUR: ${payload.excessFee}\n`,
       `BARCODE: ${payload.barcode}\n`,
       "-----------------------------\n",
-      "KEEP THIS RECEIPT\n",
+      "CONSERVE ESTE RESGUARDO\n",
       "\n\n\n",
       "\u001DV\u0001",
     ].join("");
   }
 
-  preview(type: "boarding-pass" | "baggage-receipt", payload: PrintTemplatePayload) {
+  buildUpgradeReceiptTicket(payload: PrintTemplatePayload) {
+    return [
+      "\u001B@\n",
+      "SKYBRIDGE ATLANTIC\n",
+      "DOCUMENTO DE UPGRADE\n",
+      "-----------------------------\n",
+      `PAX: ${payload.passenger}\n`,
+      `VLO: ${payload.flightNumber}\n`,
+      `DESDE: ${payload.fromClass}\n`,
+      `HACIA: ${payload.toClass}\n`,
+      `ASIENTO: ${payload.seat}\n`,
+      `MOTIVO: ${payload.reason}\n`,
+      "-----------------------------\n",
+      "ACTUALIZACION REGISTRADA\n",
+      "\n\n\n",
+      "\u001DV\u0001",
+    ].join("");
+  }
+
+  preview(type: "boarding-pass" | "baggage-receipt" | "upgrade-receipt", payload: PrintTemplatePayload) {
     return {
       type,
       escpos:
         type === "boarding-pass"
           ? this.buildBoardingPassTicket(payload)
-          : this.buildBaggageReceiptTicket(payload),
+          : type === "upgrade-receipt"
+            ? this.buildUpgradeReceiptTicket(payload)
+            : this.buildBaggageReceiptTicket(payload),
       windowsPrintableText:
         type === "boarding-pass"
-          ? `BOARDING PASS\n${payload.passenger}\n${payload.flightNumber}\n${payload.seat}`
-          : `BAGGAGE RECEIPT\n${payload.passenger}\n${payload.bagTag}\n${payload.weight} KG`,
+          ? `TARJETA DE EMBARQUE\n${payload.passenger}\n${payload.flightNumber}\n${payload.seat}`
+          : type === "upgrade-receipt"
+            ? `DOCUMENTO DE UPGRADE\n${payload.passenger}\n${payload.flightNumber}\n${payload.toClass}`
+            : `RESGUARDO DE EQUIPAJE\n${payload.passenger}\n${payload.bagTag}\n${payload.weight} KG`,
     };
   }
 }

@@ -10,3 +10,11 @@ publicRouter.get("/site", (_req, res) => {
 publicRouter.get("/flights", (_req, res) => {
   res.json(store.getPublicSite().featuredFlights);
 });
+
+publicRouter.get("/news", (_req, res) => {
+  res.json(store.getPublicSite().news);
+});
+
+publicRouter.get("/faqs", (_req, res) => {
+  res.json(store.getPublicSite().faqs);
+});

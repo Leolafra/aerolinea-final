@@ -1,130 +1,141 @@
-import type { ReactNode } from "react";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { api } from "./api";
-import type { Airline, AuthResponse, DashboardData, SessionUser } from "./types";
+import { DenseTable, DocumentPreviewCard, FlightDetailPanel, SectionHeading, SeatMapView, Window } from "./components/legacy-ui";
+import { formatDateTime, translateAuditAction, translateCabinClass, translateFlightStatus, translateRole, translateSummaryKey, translateTicketStatus } from "./formatters";
+import type {
+  Airline,
+  Aircraft,
+  AuditLog,
+  AuthResponse,
+  CustomerAccountAdmin,
+  CustomerArea,
+  CustomerSession,
+  DashboardData,
+  DocumentPayload,
+  EmployeeMessage,
+  Flight,
+  FlightDetail,
+  Incident,
+  Passenger,
+  PrintHistory,
+  PublicPayload,
+  SearchFlight,
+  SessionUser,
+  SettingsPayload,
+} from "./types";
 
-type ViewMode = "public" | "employee-access" | "portal";
-type ScreenKey = "dashboard" | "flights" | "passengers" | "checkin" | "boarding" | "upgrades" | "fleet" | "audit" | "settings";
+type ViewMode = "publico" | "acceso-clientes" | "area-cliente" | "acceso-empleados" | "portal-empleado" | "pantalla-puerta";
+type EmployeeScreen =
+  | "dashboard"
+  | "vuelos"
+  | "pasajeros"
+  | "checkin"
+  | "embarque"
+  | "equipaje"
+  | "upgrades"
+  | "incidencias"
+  | "mensajeria"
+  | "clientes"
+  | "flota"
+  | "auditoria"
+  | "ajustes";
 
-type PublicSitePayload = {
-  airline: Airline;
-  airports: Array<{ code: string; city: string; country: string; name: string }>;
-  featuredFlights: Array<{ id: string; flightNumber: string; route: string; originCity: string; destinationCity: string; scheduledAt: string; status: string }>;
-  services: Array<{ title: string; description: string }>;
+const labels: Record<EmployeeScreen, string> = {
+  dashboard: "Panel operativo",
+  vuelos: "Vuelos",
+  pasajeros: "Pasajeros",
+  checkin: "Check-in",
+  embarque: "Embarque",
+  equipaje: "Equipaje",
+  upgrades: "Upgrades",
+  incidencias: "Incidencias",
+  mensajeria: "Mensajería",
+  clientes: "Clientes",
+  flota: "Flota",
+  auditoria: "Auditoría",
+  ajustes: "Ajustes",
 };
-
-type Flight = {
-  id: string;
-  flightNumber: string;
-  status: string;
-  scheduledAt: string;
-  estimatedAt: string;
-  occupancyLimit: number;
-  overbookLimit: number;
-  operationalNotes?: string | null;
-  passengerCount: number;
-  gate?: { code: string };
-  origin: { code: string; city: string };
-  destination: { code: string; city: string };
-  aircraft?: { registration: string; model: string };
-  bookings: Array<{
-    id: string;
-    locator: string;
-    seatNumber?: string | null;
-    ticketStatus: string;
-    cabinClass: string;
-    passenger: { firstName: string; lastName: string; documentNumber: string };
-  }>;
-};
-
-type Passenger = {
-  id: string;
-  firstName: string;
-  lastName: string;
-  documentNumber: string;
-  nationality: string;
-  contactEmail: string;
-  operationalNotes?: string;
-  bookings: Array<{ locator: string; ticketStatus: string; seatNumber?: string | null; flight: { flightNumber: string } }>;
-  baggageItems: Array<{ bagTag: string; totalWeightKg: number }>;
-};
-
-type SeatAssignment = { id: string; seatNumber: string; cabinClass: string; state: string; bookingId?: string | null };
-type SeatMapResponse = { id: string; aircraft?: { registration: string; model: string; cabinConfigJson: string }; seatAssignments: SeatAssignment[] };
-type Upgrade = { id: string; reason: string; fromClass: string; toClass: string; newSeat?: string | null; booking: { locator: string; passenger: { firstName: string; lastName: string }; flight: { flightNumber: string } }; employee: { fullName: string } };
-type Aircraft = { id: string; registration: string; model: string; manufacturer: string; seatCapacity: number; status: string; cabinConfigJson: string; flights: Array<{ flightNumber: string; status: string }> };
-type AuditLog = { id: string; action: string; entityType: string; terminalId: string; createdAt: string; user: { employee?: { fullName: string } } };
-type SettingsPayload = { airline: Airline & { baggagePolicy: string; upgradePolicy: string; ticketPrefix: string }; settings: Array<{ category: string; key: string; value: string }>; printerProfiles: Array<{ printerName: string; driverType: string; terminalName: string; paperWidth: number }> };
-type PrintPreview = { type: string; escpos: string; windowsPrintableText: string };
-
-const screensByRole: Record<string, ScreenKey[]> = {
-  ADMIN: ["dashboard", "flights", "passengers", "checkin", "boarding", "upgrades", "fleet", "audit", "settings"],
-  CHECKIN_AGENT: ["dashboard", "flights", "passengers", "checkin"],
-  GATE_AGENT: ["dashboard", "flights", "boarding"],
-  SUPERVISOR: ["dashboard", "flights", "passengers", "checkin", "boarding", "upgrades", "fleet", "audit", "settings"],
-  OPERATIONS: ["dashboard", "flights", "upgrades", "fleet"],
-  FLEET_MANAGER: ["dashboard", "fleet", "flights"],
-  CUSTOMER_SERVICE: ["dashboard", "passengers", "upgrades", "flights"],
-};
-
-const labels: Record<ScreenKey, string> = {
-  dashboard: "OPERATIONS SUMMARY",
-  flights: "FLIGHT CONTROL",
-  passengers: "PASSENGER MASTER",
-  checkin: "CHECK-IN DESK",
-  boarding: "GATE BOARDING",
-  upgrades: "UPGRADES / OVERSALE",
-  fleet: "FLEET CONFIGURATION",
-  audit: "EMPLOYEE AUDIT",
-  settings: "SYSTEM SETTINGS",
-};
-
-function formatDateTime(input: string) {
-  return new Intl.DateTimeFormat("es-ES", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" }).format(new Date(input));
-}
-
-function groupSeats(seats: SeatAssignment[]) {
-  const grouped = new Map<number, SeatAssignment[]>();
-  for (const seat of seats) {
-    const row = Number(seat.seatNumber.replace(/[A-Z]/g, ""));
-    grouped.set(row, [...(grouped.get(row) ?? []), seat].sort((a, b) => a.seatNumber.localeCompare(b.seatNumber)));
-  }
-  return [...grouped.entries()].sort((a, b) => a[0] - b[0]);
-}
 
 function resolveView(pathname: string): ViewMode {
-  if (pathname.startsWith("/employee-access") || pathname.startsWith("/staff")) {
-    return "employee-access";
-  }
-  return "public";
+  if (pathname.startsWith("/staff")) return "portal-empleado";
+  if (pathname.startsWith("/employee-access")) return "acceso-empleados";
+  if (pathname.startsWith("/mi-cuenta")) return "area-cliente";
+  if (pathname.startsWith("/clientes/acceso")) return "acceso-clientes";
+  if (pathname.startsWith("/pantalla-puerta")) return "pantalla-puerta";
+  return "publico";
 }
 
 function App() {
   const [view, setView] = useState<ViewMode>(resolveView(window.location.pathname));
-  const [user, setUser] = useState<SessionUser | null>(null);
-  const [airline, setAirline] = useState<Airline | null>(null);
-  const [publicSite, setPublicSite] = useState<PublicSitePayload | null>(null);
-  const [screen, setScreen] = useState<ScreenKey>("dashboard");
-  const [error, setError] = useState("");
+  const [publicData, setPublicData] = useState<PublicPayload | null>(null);
+  const [employee, setEmployee] = useState<SessionUser | null>(null);
   const [dashboard, setDashboard] = useState<DashboardData | null>(null);
   const [flights, setFlights] = useState<Flight[]>([]);
+  const [selectedFlightId, setSelectedFlightId] = useState<string>("");
+  const [flightDetail, setFlightDetail] = useState<FlightDetail | null>(null);
   const [passengers, setPassengers] = useState<Passenger[]>([]);
-  const [seatMap, setSeatMap] = useState<SeatMapResponse | null>(null);
-  const [upgrades, setUpgrades] = useState<Upgrade[]>([]);
+  const [messages, setMessages] = useState<EmployeeMessage[]>([]);
+  const [customerArea, setCustomerArea] = useState<CustomerArea | null>(null);
+  const [customerFlightSearch, setCustomerFlightSearch] = useState<SearchFlight[]>([]);
+  const [customerAccounts, setCustomerAccounts] = useState<CustomerAccountAdmin[]>([]);
+  const [incidents, setIncidents] = useState<Incident[]>([]);
   const [fleet, setFleet] = useState<Aircraft[]>([]);
   const [audit, setAudit] = useState<AuditLog[]>([]);
   const [settings, setSettings] = useState<SettingsPayload | null>(null);
-  const [printPreview, setPrintPreview] = useState<PrintPreview | null>(null);
-  const [statusMessage, setStatusMessage] = useState("SYSTEM READY");
-  const [search, setSearch] = useState("");
-  const [loginForm, setLoginForm] = useState({ username: "admin", password: "Admin#1994", terminalId: "COUNTER-01" });
+  const [printHistory, setPrintHistory] = useState<PrintHistory[]>([]);
+  const [documentPreview, setDocumentPreview] = useState<DocumentPayload | null>(null);
+  const [screen, setScreen] = useState<EmployeeScreen>("dashboard");
+  const [loading, setLoading] = useState(true);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const [statusMessage, setStatusMessage] = useState("Sistema listo");
+  const [employeeForm, setEmployeeForm] = useState({ username: "", password: "", terminalId: "MOSTRADOR-M101" });
+  const [customerLoginForm, setCustomerLoginForm] = useState({ email: "", password: "" });
+  const [customerRegisterForm, setCustomerRegisterForm] = useState({ fullName: "", email: "", password: "", documentNumber: "", phone: "", nationality: "ES" });
+  const [passwordForm, setPasswordForm] = useState({ currentPassword: "", nextPassword: "" });
+  const [flightSearch, setFlightSearch] = useState({ originCode: "MAD", destinationCode: "LHR", date: new Date().toISOString().slice(0, 10) });
+  const [messageForm, setMessageForm] = useState({ toEmployeeId: "", subject: "", body: "" });
+  const [customerSearch, setCustomerSearch] = useState("");
+  const [passengerSearch, setPassengerSearch] = useState("");
 
-  const allowedScreens = user ? screensByRole[user.role] : [];
-  const selectedFlight = flights[0];
+  const selectedFlight = useMemo(() => flights.find((flight) => flight.id === selectedFlightId) ?? flights[0] ?? null, [flights, selectedFlightId]);
 
-  function navigate(next: ViewMode, path: string) {
+  function go(next: ViewMode, path: string) {
     window.history.pushState({}, "", path);
     setView(next);
+  }
+
+  async function loadPublic() {
+    setPublicData(await api.get<PublicPayload>("/public/site", { cacheMs: 20_000 }));
+  }
+
+  async function loadEmployeeCore() {
+    const [dashboardData, flightsData, passengersData] = await Promise.all([
+      api.get<DashboardData>("/dashboard", { cacheMs: 5_000 }),
+      api.get<Flight[]>("/flights"),
+      api.get<Passenger[]>("/passengers"),
+    ]);
+    setDashboard(dashboardData);
+    setFlights(flightsData);
+    setPassengers(passengersData);
+    if (!selectedFlightId && flightsData[0]) setSelectedFlightId(flightsData[0].id);
+  }
+
+  async function loadEmployeeScreen(targetScreen: EmployeeScreen, flightId?: string) {
+    if (targetScreen === "mensajeria") setMessages(await api.get<EmployeeMessage[]>("/messages/employee"));
+    if (targetScreen === "clientes") setCustomerAccounts(await api.get<CustomerAccountAdmin[]>("/customers/admin"));
+    if (targetScreen === "incidencias") setIncidents(await api.get<Incident[]>("/incidents"));
+    if (targetScreen === "flota") setFleet(await api.get<Aircraft[]>("/fleet"));
+    if (targetScreen === "auditoria") setAudit(await api.get<AuditLog[]>("/audit"));
+    if (targetScreen === "ajustes") setSettings(await api.get<SettingsPayload>("/settings", { cacheMs: 5_000 }));
+    if (targetScreen === "equipaje") setPrintHistory(await api.get<PrintHistory[]>("/printing/history"));
+    if (["vuelos", "checkin", "embarque", "upgrades"].includes(targetScreen) && (flightId || selectedFlight?.id)) {
+      setFlightDetail(await api.get<FlightDetail>(`/flights/${flightId ?? selectedFlight!.id}`));
+    }
+  }
+
+  async function loadCustomerArea() {
+    setCustomerArea(await api.get<CustomerArea>("/customers/me"));
   }
 
   useEffect(() => {
@@ -134,317 +145,854 @@ function App() {
   }, []);
 
   useEffect(() => {
-    api.get<PublicSitePayload>("/public/site").then(setPublicSite).catch(() => undefined);
+    (async () => {
+      try {
+        setLoading(true);
+        await loadPublic();
+        if (window.location.pathname.startsWith("/staff")) {
+          const session = await api.get<{ user: SessionUser; airline: Airline }>("/auth/me");
+          setEmployee(session.user);
+          await loadEmployeeCore();
+          go("portal-empleado", "/staff");
+        } else if (window.location.pathname.startsWith("/mi-cuenta")) {
+          const area = await api.get<CustomerArea>("/customers/me");
+          setCustomerArea(area);
+          go("area-cliente", "/mi-cuenta");
+        }
+      } catch {
+        if (window.location.pathname.startsWith("/staff")) setView("acceso-empleados");
+        if (window.location.pathname.startsWith("/mi-cuenta")) setView("acceso-clientes");
+      } finally {
+        setLoading(false);
+      }
+    })();
   }, []);
 
   useEffect(() => {
-    if (!window.location.pathname.startsWith("/staff")) return;
-    api
-      .get<{ user: SessionUser; airline: Airline }>("/auth/me")
-      .then(async (session) => {
-        setUser(session.user);
-        setAirline(session.airline);
-        await loadCore();
-        setView("portal");
-      })
-      .catch(() => setView("employee-access"));
-  }, []);
+    if (employee && selectedFlight?.id) {
+      loadEmployeeScreen(screen, selectedFlight.id).catch((loadError: Error) => setError(loadError.message));
+    }
+  }, [screen, employee, selectedFlightId]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  async function loadCore() {
-    const [dashboardData, flightsData, passengersData] = await Promise.all([
-      api.get<DashboardData>("/dashboard"),
-      api.get<Flight[]>("/flights"),
-      api.get<Passenger[]>("/passengers"),
-    ]);
-    setDashboard(dashboardData);
-    setFlights(flightsData);
-    setPassengers(passengersData);
-  }
-
-  async function loadRoleData(currentScreen: ScreenKey, currentFlights: Flight[]) {
-    if (!currentFlights.length) return;
-    if (["checkin", "flights", "boarding"].includes(currentScreen)) setSeatMap(await api.get<SeatMapResponse>(`/seats/${currentFlights[0].id}`));
-    if (currentScreen === "upgrades") setUpgrades(await api.get<Upgrade[]>("/upgrades"));
-    if (currentScreen === "fleet") setFleet(await api.get<Aircraft[]>("/fleet"));
-    if (currentScreen === "audit") setAudit(await api.get<AuditLog[]>("/audit"));
-    if (currentScreen === "settings") setSettings(await api.get<SettingsPayload>("/settings"));
-  }
-
-  useEffect(() => {
-    if (!user) return;
-    loadRoleData(screen, flights).catch((loadError: Error) => setError(loadError.message));
-  }, [screen, user]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  async function login() {
+  async function employeeLogin() {
     try {
+      setBusy(true);
       setError("");
-      const session = await api.post<AuthResponse>("/auth/login", loginForm);
-      setUser(session.user);
-      const me = await api.get<{ user: SessionUser; airline: Airline }>("/auth/me");
-      setAirline(me.airline);
-      await loadCore();
-      setStatusMessage(`SESSION OPEN FOR ${session.user.fullName.toUpperCase()}`);
-      navigate("portal", "/staff");
+      const session = await api.post<AuthResponse>("/auth/login", employeeForm);
+      setEmployee(session.user);
+      await loadEmployeeCore();
+      setStatusMessage(`Sesión abierta para ${session.user.fullName}`);
+      go("portal-empleado", "/staff");
     } catch (loginError) {
-      setError(loginError instanceof Error ? loginError.message : "Acceso denegado.");
+      setError(loginError instanceof Error ? loginError.message : "No se pudo iniciar sesión.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function changeEmployeePassword() {
+    try {
+      setBusy(true);
+      await api.post("/auth/change-password", passwordForm);
+      setEmployee((current) => (current ? { ...current, forcePasswordChange: false } : current));
+      setPasswordForm({ currentPassword: "", nextPassword: "" });
+      setStatusMessage("Contraseña actualizada correctamente");
+    } catch (changeError) {
+      setError(changeError instanceof Error ? changeError.message : "No fue posible cambiar la contraseña.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function customerRegister() {
+    try {
+      setBusy(true);
+      await api.post("/customers/register", customerRegisterForm);
+      setStatusMessage("Cuenta de cliente creada. Ya puede iniciar sesión.");
+      go("acceso-clientes", "/clientes/acceso");
+    } catch (registerError) {
+      setError(registerError instanceof Error ? registerError.message : "No se pudo registrar la cuenta.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function customerLogin() {
+    try {
+      setBusy(true);
+      setError("");
+      await api.post<{ customer: CustomerSession }>("/customers/login", customerLoginForm);
+      await loadCustomerArea();
+      go("area-cliente", "/mi-cuenta");
+    } catch (loginError) {
+      setError(loginError instanceof Error ? loginError.message : "No se pudo iniciar sesión.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function customerSearchFlights() {
+    try {
+      setBusy(true);
+      setCustomerFlightSearch(await api.get<SearchFlight[]>(`/customers/search-flights?originCode=${flightSearch.originCode}&destinationCode=${flightSearch.destinationCode}&date=${flightSearch.date}`));
+    } catch (searchError) {
+      setError(searchError instanceof Error ? searchError.message : "No se pudieron cargar los vuelos.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function customerReserve(flightId: string) {
+    try {
+      setBusy(true);
+      await api.post("/customers/reservations", { flightId, cabinClass: "ECONOMY", baggagePieces: 1, extras: ["Asiento estándar"] });
+      await loadCustomerArea();
+      setStatusMessage("Reserva confirmada");
+    } catch (reservationError) {
+      setError(reservationError instanceof Error ? reservationError.message : "No se pudo crear la reserva.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function customerCheckin(bookingId: string) {
+    try {
+      setBusy(true);
+      await api.post(`/customers/checkin/${bookingId}`, {});
+      setDocumentPreview(await api.get<DocumentPayload>(`/documents/customer/booking/${bookingId}`));
+      await loadCustomerArea();
+      setStatusMessage("Check-in online completado");
+    } catch (checkinError) {
+      setError(checkinError instanceof Error ? checkinError.message : "No se pudo completar el check-in.");
+    } finally {
+      setBusy(false);
     }
   }
 
   async function assignSeat(bookingId: string, seatNumber: string) {
     if (!selectedFlight) return;
     try {
+      setBusy(true);
       await api.post("/seats/assign", { bookingId, flightId: selectedFlight.id, seatNumber });
-      setStatusMessage(`SEAT ${seatNumber} ASSIGNED`);
-      const [flightsData, map] = await Promise.all([api.get<Flight[]>("/flights"), api.get<SeatMapResponse>(`/seats/${selectedFlight.id}`)]);
-      setFlights(flightsData);
-      setSeatMap(map);
+      await loadEmployeeCore();
+      setFlightDetail(await api.get<FlightDetail>(`/flights/${selectedFlight.id}`));
+      setStatusMessage(`Asiento ${seatNumber} asignado`);
     } catch (seatError) {
-      setError(seatError instanceof Error ? seatError.message : "No fue posible asignar asiento.");
+      setError(seatError instanceof Error ? seatError.message : "No se pudo asignar el asiento.");
+    } finally {
+      setBusy(false);
     }
   }
 
   async function performCheckin(bookingId: string, seatNumber: string) {
-    if (!selectedFlight) return;
     try {
+      setBusy(true);
       await api.post("/checkin", { bookingId, seatNumber });
-      const booking = selectedFlight.bookings.find((item) => item.id === bookingId);
-      if (booking) {
-        setPrintPreview(await api.post<PrintPreview>("/printing/preview", { type: "boarding-pass", payload: { passenger: `${booking.passenger.firstName} ${booking.passenger.lastName}`, flightNumber: selectedFlight.flightNumber, origin: selectedFlight.origin.code, destination: selectedFlight.destination.code, date: formatDateTime(selectedFlight.scheduledAt), gate: selectedFlight.gate?.code ?? "TBD", seat: seatNumber, cabinClass: booking.cabinClass, locator: booking.locator } }));
-      }
-      await loadCore();
-      setSeatMap(await api.get<SeatMapResponse>(`/seats/${selectedFlight.id}`));
-      setStatusMessage(`CHECK-IN COMPLETED FOR ${bookingId}`);
+      setDocumentPreview(await api.get<DocumentPayload>(`/documents/booking/${bookingId}`));
+      await loadEmployeeCore();
+      if (selectedFlight) setFlightDetail(await api.get<FlightDetail>(`/flights/${selectedFlight.id}`));
+      setStatusMessage("Check-in completado");
     } catch (checkinError) {
-      setError(checkinError instanceof Error ? checkinError.message : "Check-in no disponible.");
+      setError(checkinError instanceof Error ? checkinError.message : "No se pudo completar el check-in.");
+    } finally {
+      setBusy(false);
     }
   }
 
   async function addBag(passengerId: string) {
     if (!selectedFlight) return;
     try {
-      const result = await api.post<{ printPreview: PrintPreview }>("/baggage", { passengerId, flightId: selectedFlight.id, pieces: 1, totalWeightKg: 26 });
-      setPrintPreview(result.printPreview);
-      setStatusMessage("BAGGAGE RECEIPT GENERATED");
+      setBusy(true);
+      await api.post("/baggage", { passengerId, flightId: selectedFlight.id, pieces: 1, totalWeightKg: 25 });
+      setPrintHistory(await api.get<PrintHistory[]>("/printing/history"));
+      setStatusMessage("Equipaje facturado y resguardo preparado");
     } catch (bagError) {
-      setError(bagError instanceof Error ? bagError.message : "No se pudo facturar equipaje.");
+      setError(bagError instanceof Error ? bagError.message : "No se pudo facturar el equipaje.");
+    } finally {
+      setBusy(false);
     }
   }
 
   async function boardPassenger(bookingId: string) {
     try {
+      setBusy(true);
       await api.post("/boarding", { bookingId });
-      await loadCore();
-      setStatusMessage(`BOARDING REGISTERED FOR ${bookingId}`);
+      await loadEmployeeCore();
+      if (selectedFlight) setFlightDetail(await api.get<FlightDetail>(`/flights/${selectedFlight.id}`));
+      setStatusMessage("Embarque registrado");
     } catch (boardingError) {
-      setError(boardingError instanceof Error ? boardingError.message : "Embarque bloqueado.");
+      setError(boardingError instanceof Error ? boardingError.message : "No se pudo registrar el embarque.");
+    } finally {
+      setBusy(false);
     }
   }
 
   async function createUpgrade(bookingId: string) {
     try {
-      await api.post("/upgrades", { bookingId, toClass: "BUSINESS", newSeat: "3C", reason: "OVERSALE PRIORITY REALLOCATION", price: 0 });
-      setUpgrades(await api.get<Upgrade[]>("/upgrades"));
-      setStatusMessage("UPGRADE PROCESSED");
+      setBusy(true);
+      await api.post("/upgrades", { bookingId, toClass: "BUSINESS", newSeat: "2A", reason: "Reubicación por sobreventa", price: 0 });
+      if (selectedFlight) setFlightDetail(await api.get<FlightDetail>(`/flights/${selectedFlight.id}`));
+      setStatusMessage("Upgrade procesado");
     } catch (upgradeError) {
-      setError(upgradeError instanceof Error ? upgradeError.message : "Upgrade no disponible.");
+      setError(upgradeError instanceof Error ? upgradeError.message : "No se pudo aplicar el upgrade.");
+    } finally {
+      setBusy(false);
     }
   }
 
-  const filteredPassengers = passengers.filter((passenger) => !search || `${passenger.firstName} ${passenger.lastName} ${passenger.documentNumber}`.toLowerCase().includes(search.toLowerCase()));
+  async function simulateTick() {
+    try {
+      setBusy(true);
+      await api.post("/simulation/tick", {});
+      await loadEmployeeCore();
+      setStatusMessage("Simulación operativa actualizada");
+    } catch (simulationError) {
+      setError(simulationError instanceof Error ? simulationError.message : "No se pudo ejecutar la simulación.");
+    } finally {
+      setBusy(false);
+    }
+  }
 
-  if (view !== "portal") {
-    return (
-      <div className="public-site">
-        <header className="public-header">
-          <div className="public-brand">
-            <img src="/branding/skybridge-logo.svg" alt="SkyBridge Atlantic" className="public-logo" />
-            <div>
-              <div className="public-brand-name">{publicSite?.airline.commercialName ?? "SkyBridge Atlantic"}</div>
-              <div className="public-brand-sub">Aerolinea y operaciones aeroportuarias internacionales</div>
-            </div>
-          </div>
-          <nav className="public-nav">
-            <a href="#inicio">Inicio</a>
-            <a href="#vuelos">Vuelos</a>
-            <a href="#informacion">Informacion</a>
-            <a href="#servicios">Servicios</a>
-            <a href="#contacto">Contacto</a>
-            <button className="employee-access-button" onClick={() => navigate("employee-access", "/employee-access")}>Acceso empleados</button>
-          </nav>
-        </header>
+  async function sendMessage() {
+    try {
+      setBusy(true);
+      await api.post("/messages/employee", { ...messageForm, priority: "MEDIA" });
+      setMessages(await api.get<EmployeeMessage[]>("/messages/employee"));
+      setMessageForm({ toEmployeeId: "", subject: "", body: "" });
+      setStatusMessage("Mensaje enviado");
+    } catch (messageError) {
+      setError(messageError instanceof Error ? messageError.message : "No se pudo enviar el mensaje.");
+    } finally {
+      setBusy(false);
+    }
+  }
 
-        <section id="inicio" className="hero">
-          <div className="hero-copy">
-            <span className="hero-kicker">Corporate Airline Operations</span>
-            <h1>Infraestructura digital para aerolinea, pasajeros y control aeroportuario.</h1>
-            <p>Portal publico para pasajeros y visitantes, con acceso privado para personal autorizado, gestion operativa, check-in, equipaje y supervision de vuelos.</p>
-            <div className="hero-actions">
-              <a className="primary-link" href="#vuelos">Consultar vuelos</a>
-              <button className="secondary-link" onClick={() => navigate("employee-access", "/employee-access")}>Acceso personal</button>
-            </div>
-          </div>
-          <div className="hero-card">
-            <div className="hero-card-title">Estado operativo</div>
-            <div className="hero-stat"><strong>{publicSite?.featuredFlights.length ?? 0}</strong><span>Vuelos destacados</span></div>
-            <div className="hero-stat"><strong>{publicSite?.airports.length ?? 3}</strong><span>Aeropuertos servidos</span></div>
-            <div className="hero-stat"><strong>24/7</strong><span>Centro de control</span></div>
-          </div>
-        </section>
+  const filteredPassengers = useMemo(
+    () =>
+      passengers.filter((passenger) =>
+        `${passenger.firstName} ${passenger.lastName} ${passenger.documentNumber}`.toLowerCase().includes(passengerSearch.toLowerCase()),
+      ),
+    [passengers, passengerSearch],
+  );
 
-        <section id="vuelos" className="public-section">
-          <div className="section-heading">
-            <span>Vuelos</span>
-            <h2>Salidas y operaciones destacadas</h2>
-          </div>
-          <div className="flight-card-grid">
-            {publicSite?.featuredFlights.map((flight) => (
-              <article key={flight.id} className="flight-card">
-                <div className="flight-card-top">
-                  <strong>{flight.flightNumber}</strong>
-                  <span>{flight.status}</span>
-                </div>
-                <div className="flight-route">{flight.route}</div>
-                <div className="flight-city-row">
-                  <span>{flight.originCity}</span>
-                  <span>{flight.destinationCity}</span>
-                </div>
-                <div className="flight-time">{formatDateTime(flight.scheduledAt)}</div>
-              </article>
-            ))}
-          </div>
-        </section>
+  const filteredCustomers = useMemo(
+    () =>
+      customerAccounts.filter((account) => `${account.fullName} ${account.email}`.toLowerCase().includes(customerSearch.toLowerCase())),
+    [customerAccounts, customerSearch],
+  );
 
-        <section id="informacion" className="public-section split-section">
-          <div>
-            <div className="section-heading">
-              <span>Informacion</span>
-              <h2>Aerolinea y red aeroportuaria</h2>
-            </div>
-            <p>SkyBridge Atlantic combina operacion comercial, control de flota, trazabilidad de pasajeros y coordinacion de aeropuerto en una plataforma unificada preparada para despliegue en internet.</p>
-          </div>
-          <div className="info-list">
-            {publicSite?.airports.map((airport) => (
-              <div key={airport.code} className="info-card">
-                <strong>{airport.code}</strong>
-                <span>{airport.name}</span>
-                <small>{airport.city}, {airport.country}</small>
-              </div>
-            ))}
-          </div>
-        </section>
-
-        <section id="servicios" className="public-section">
-          <div className="section-heading">
-            <span>Servicios</span>
-            <h2>Servicios para pasajeros y personal operativo</h2>
-          </div>
-          <div className="service-grid">
-            {publicSite?.services.map((service) => (
-              <article key={service.title} className="service-card">
-                <h3>{service.title}</h3>
-                <p>{service.description}</p>
-              </article>
-            ))}
-          </div>
-        </section>
-
-        <section id="contacto" className="public-section contact-section">
-          <div className="section-heading">
-            <span>Contacto</span>
-            <h2>Atencion e informacion corporativa</h2>
-          </div>
-          <div className="contact-grid">
-            <div className="contact-card"><strong>Atencion al pasajero</strong><span>support@aeropuertohaider.com</span></div>
-            <div className="contact-card"><strong>Centro de operaciones</strong><span>ops@aeropuertohaider.com</span></div>
-            <div className="contact-card"><strong>Dominio previsto</strong><span>https://aeropuertohaider.com</span></div>
-          </div>
-        </section>
-
-        <footer className="public-footer">
-          <span>{publicSite?.airline.commercialName ?? "SkyBridge Atlantic"}</span>
-          <button className="footer-access" onClick={() => navigate("employee-access", "/employee-access")}>Acceso empleados</button>
-        </footer>
-
-        {view === "employee-access" && (
-          <div className="employee-overlay">
-            <div className="employee-dialog">
-              <div className="employee-dialog-top">
-                <h2>Acceso empleados</h2>
-                <button onClick={() => navigate("public", "/")}>Cerrar</button>
-              </div>
-              <p>Acceso privado para personal de aerolinea, aeropuerto, supervisores y operaciones.</p>
-              <label>Usuario</label>
-              <input value={loginForm.username} onChange={(event) => setLoginForm({ ...loginForm, username: event.target.value })} />
-              <label>Contrasena</label>
-              <input type="password" value={loginForm.password} onChange={(event) => setLoginForm({ ...loginForm, password: event.target.value })} />
-              <label>Puesto / terminal</label>
-              <input value={loginForm.terminalId} onChange={(event) => setLoginForm({ ...loginForm, terminalId: event.target.value })} />
-              <div className="employee-actions">
-                <button onClick={login}>Entrar</button>
-              </div>
-              {error && <div className="alert-box modern">{error}</div>}
-            </div>
-          </div>
-        )}
-      </div>
-    );
+  if (loading) {
+    return <div className="loading-screen"><div className="spinner" /><p>Cargando plataforma aeroportuaria...</p></div>;
   }
 
   return (
-    <div className="desktop" style={{ ["--accent" as string]: airline?.colorPrimary ?? "#163455", ["--paper" as string]: airline?.colorAccent ?? "#d6d1c4" }}>
+    <>
+      {view === "publico" || view === "acceso-clientes" || view === "acceso-empleados" ? (
+        <PublicPortal
+          data={publicData}
+          view={view}
+          error={error}
+          busy={busy}
+          customerLoginForm={customerLoginForm}
+          setCustomerLoginForm={setCustomerLoginForm}
+          customerRegisterForm={customerRegisterForm}
+          setCustomerRegisterForm={setCustomerRegisterForm}
+          employeeForm={employeeForm}
+          setEmployeeForm={setEmployeeForm}
+          onCustomerLogin={customerLogin}
+          onCustomerRegister={customerRegister}
+          onEmployeeLogin={employeeLogin}
+          onOpenCustomer={() => go("acceso-clientes", "/clientes/acceso")}
+          onOpenEmployee={() => go("acceso-empleados", "/employee-access")}
+          onCloseOverlay={() => go("publico", "/")}
+        />
+      ) : null}
+
+      {view === "area-cliente" && customerArea ? (
+        <CustomerPortal
+          area={customerArea}
+          searchResults={customerFlightSearch}
+          search={flightSearch}
+          setSearch={setFlightSearch}
+          statusMessage={statusMessage}
+          busy={busy}
+          documentPreview={documentPreview}
+          onSearchFlights={customerSearchFlights}
+          onReserve={customerReserve}
+          onCheckin={customerCheckin}
+          onLogout={async () => {
+            await api.post("/customers/logout", {});
+            setCustomerArea(null);
+            go("publico", "/");
+          }}
+        />
+      ) : null}
+
+      {view === "portal-empleado" && employee ? (
+        <EmployeePortal
+          employee={employee}
+          screen={screen}
+          setScreen={setScreen}
+          statusMessage={statusMessage}
+          dashboard={dashboard}
+          flights={flights}
+          selectedFlight={selectedFlight}
+          setSelectedFlightId={setSelectedFlightId}
+          flightDetail={flightDetail}
+          passengers={filteredPassengers}
+          passengerSearch={passengerSearch}
+          setPassengerSearch={setPassengerSearch}
+          incidents={incidents}
+          messages={messages}
+          customerAccounts={filteredCustomers}
+          customerSearch={customerSearch}
+          setCustomerSearch={setCustomerSearch}
+          fleet={fleet}
+          audit={audit}
+          settings={settings}
+          printHistory={printHistory}
+          documentPreview={documentPreview}
+          busy={busy}
+          onAssignSeat={assignSeat}
+          onCheckin={performCheckin}
+          onAddBag={addBag}
+          onBoardPassenger={boardPassenger}
+          onUpgrade={createUpgrade}
+          onSimulateTick={simulateTick}
+          messageForm={messageForm}
+          setMessageForm={setMessageForm}
+          onSendMessage={sendMessage}
+          onLogout={async () => {
+            await api.post("/auth/logout", {});
+            setEmployee(null);
+            go("publico", "/");
+          }}
+        />
+      ) : null}
+
+      {employee?.forcePasswordChange && view === "portal-empleado" ? (
+        <div className="security-overlay">
+          <div className="security-dialog">
+            <h2>Cambio obligatorio de contraseña</h2>
+            <p>Por seguridad, debe establecer una nueva contraseña antes de continuar. Esta regla aplica al primer acceso de todos los usuarios creados y también a Leo Lafragueta.</p>
+            <label>Contraseña actual</label>
+            <input type="password" value={passwordForm.currentPassword} onChange={(event) => setPasswordForm({ ...passwordForm, currentPassword: event.target.value })} />
+            <label>Nueva contraseña</label>
+            <input type="password" value={passwordForm.nextPassword} onChange={(event) => setPasswordForm({ ...passwordForm, nextPassword: event.target.value })} />
+            <button onClick={changeEmployeePassword} disabled={busy}>Actualizar contraseña</button>
+          </div>
+        </div>
+      ) : null}
+    </>
+  );
+}
+
+function PublicPortal(props: {
+  data: PublicPayload | null;
+  view: ViewMode;
+  error: string;
+  busy: boolean;
+  customerLoginForm: { email: string; password: string };
+  setCustomerLoginForm: (value: { email: string; password: string }) => void;
+  customerRegisterForm: { fullName: string; email: string; password: string; documentNumber: string; phone: string; nationality: string };
+  setCustomerRegisterForm: (value: { fullName: string; email: string; password: string; documentNumber: string; phone: string; nationality: string }) => void;
+  employeeForm: { username: string; password: string; terminalId: string };
+  setEmployeeForm: (value: { username: string; password: string; terminalId: string }) => void;
+  onCustomerLogin: () => void;
+  onCustomerRegister: () => void;
+  onEmployeeLogin: () => void;
+  onOpenCustomer: () => void;
+  onOpenEmployee: () => void;
+  onCloseOverlay: () => void;
+}) {
+  const { data, view, error, busy } = props;
+  return (
+    <div className="public-site">
+      <header className="public-header">
+        <div className="public-brand">
+          <img src="/branding/skybridge-logo.svg" alt="Aeropuerto Haider" className="public-logo" />
+          <div>
+            <div className="public-brand-name">{data?.airportName ?? "Aeropuerto Haider"}</div>
+            <div className="public-brand-sub">Plataforma pública, clientes y operación aeroportuaria profesional</div>
+          </div>
+        </div>
+        <nav className="public-nav">
+          <a href="#inicio">Inicio</a>
+          <a href="#vuelos">Vuelos</a>
+          <a href="#destinos">Destinos</a>
+          <a href="#servicios">Servicios</a>
+          <a href="#noticias">Noticias</a>
+          <a href="#faq">Preguntas frecuentes</a>
+          <button className="secondary-link" onClick={props.onOpenCustomer}>Área privada clientes</button>
+          <button className="employee-access-button" onClick={props.onOpenEmployee}>Acceso empleados</button>
+        </nav>
+      </header>
+
+      <section id="inicio" className="hero">
+        <div className="hero-copy">
+          <span className="hero-kicker">Aeropuerto y aerolínea en una sola plataforma</span>
+          <h1>Operativa pública y privada con reservas, check-in, control de vuelos y experiencia corporativa real.</h1>
+          <p>El portal integra servicios al pasajero, área privada de clientes, operación de aeropuerto, control de vuelos, check-in, equipaje, mensajería interna y documentación operativa.</p>
+          <div className="hero-actions">
+            <button className="primary-link" onClick={props.onOpenCustomer}>Entrar como cliente</button>
+            <button className="secondary-link" onClick={props.onOpenEmployee}>Entrar como empleado</button>
+          </div>
+        </div>
+        <div className="hero-card">
+          <div className="hero-card-title">Resumen del día</div>
+          <div className="hero-stat"><strong>{data?.stats.vuelosHoy ?? 0}</strong><span>Vuelos programados</span></div>
+          <div className="hero-stat"><strong>{data?.stats.aerolineasActivas ?? 0}</strong><span>Aerolíneas activas</span></div>
+          <div className="hero-stat"><strong>{data?.stats.puertasOperativas ?? 0}</strong><span>Puertas operativas</span></div>
+        </div>
+      </section>
+
+      <section className="public-section notice-strip">
+        {data?.notices.map((notice) => <div key={notice.id} className={`notice-chip ${notice.severity.toLowerCase()}`}>{notice.severity}: {notice.title}</div>)}
+      </section>
+
+      <section id="vuelos" className="public-section">
+        <SectionHeading eyebrow="Estado de vuelos" title="Salidas destacadas y operativa visible al pasajero" />
+          <div className="flight-card-grid">
+          {data?.featuredFlights.map((flight) => (
+            <article key={flight.id} className="flight-card">
+              <div className="flight-card-top"><strong>{flight.flightNumber}</strong><span>{translateFlightStatus(flight.status)}</span></div>
+              <div className="flight-route">{flight.route}</div>
+              <div className="flight-city-row"><span>{flight.originCity}</span><span>{flight.destinationCity}</span></div>
+              <div className="flight-time">{formatDateTime(flight.scheduledAt)}</div>
+              <div className="flight-meta">Terminal {flight.terminal ?? "Pendiente"} · Puerta {flight.gate ?? "Pendiente"}</div>
+            </article>
+          ))}
+        </div>
+      </section>
+
+      <section id="destinos" className="public-section split-section">
+        <div>
+          <SectionHeading eyebrow="Destinos" title="Red de rutas y aerolíneas activas" />
+          <p>La plataforma actual soporta multi-aerolínea, estaciones por terminal, rutas regionales e internacionales y una operativa unificada para cliente y personal interno.</p>
+        </div>
+        <div className="info-list">
+          {data?.destinations.map((airport) => (
+            <div key={airport.code} className="info-card">
+              <strong>{airport.code}</strong>
+              <span>{airport.name}</span>
+              <small>{airport.city}, {airport.country}</small>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      <section id="servicios" className="public-section">
+        <SectionHeading eyebrow="Servicios" title="Servicios digitales y operativos para pasajeros y aerolíneas" />
+        <div className="service-grid">
+          {data?.services.map((service) => (
+            <article key={service.title} className="service-card">
+              <h3>{service.title}</h3>
+              <p>{service.description}</p>
+            </article>
+          ))}
+        </div>
+      </section>
+
+      <section id="noticias" className="public-section">
+        <SectionHeading eyebrow="Noticias y avisos" title="Actualidad corporativa y avisos operativos" />
+        <div className="service-grid">
+          {data?.news.map((news) => (
+            <article key={news.id} className="service-card">
+              <h3>{news.title}</h3>
+              <p>{news.excerpt}</p>
+              <small>{formatDateTime(news.createdAt)}</small>
+            </article>
+          ))}
+        </div>
+      </section>
+
+      <section id="faq" className="public-section">
+        <SectionHeading eyebrow="Ayuda" title="Preguntas frecuentes" />
+        <div className="faq-list">
+          {data?.faqs.map((faq) => (
+            <div key={faq.id} className="faq-item">
+              <strong>{faq.question}</strong>
+              <p>{faq.answer}</p>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      <footer className="public-footer">
+        <span>{data?.airline.commercialName ?? "SkyBridge Atlantic"} · Contacto corporativo y operación unificada</span>
+        <div className="footer-links">
+          <button className="secondary-link" onClick={props.onOpenCustomer}>Clientes</button>
+          <button className="employee-access-button" onClick={props.onOpenEmployee}>Empleados</button>
+        </div>
+      </footer>
+
+      {(view === "acceso-clientes" || view === "acceso-empleados") && (
+        <div className="employee-overlay">
+          <div className="employee-dialog wide">
+            <div className="employee-dialog-top">
+              <h2>{view === "acceso-clientes" ? "Área privada de clientes" : "Acceso privado de empleados"}</h2>
+              <button onClick={props.onCloseOverlay}>Cerrar</button>
+            </div>
+            {view === "acceso-clientes" ? (
+              <div className="auth-grid">
+                <div>
+                  <h3>Iniciar sesión</h3>
+                  <label>Correo electrónico</label>
+                  <input value={props.customerLoginForm.email} onChange={(event) => props.setCustomerLoginForm({ ...props.customerLoginForm, email: event.target.value })} />
+                  <label>Contraseña</label>
+                  <input type="password" value={props.customerLoginForm.password} onChange={(event) => props.setCustomerLoginForm({ ...props.customerLoginForm, password: event.target.value })} />
+                  <button onClick={props.onCustomerLogin} disabled={busy}>Entrar</button>
+                </div>
+                <div>
+                  <h3>Registro de clientes</h3>
+                  <label>Nombre completo</label>
+                  <input value={props.customerRegisterForm.fullName} onChange={(event) => props.setCustomerRegisterForm({ ...props.customerRegisterForm, fullName: event.target.value })} />
+                  <label>Correo electrónico</label>
+                  <input value={props.customerRegisterForm.email} onChange={(event) => props.setCustomerRegisterForm({ ...props.customerRegisterForm, email: event.target.value })} />
+                  <label>Contraseña</label>
+                  <input type="password" value={props.customerRegisterForm.password} onChange={(event) => props.setCustomerRegisterForm({ ...props.customerRegisterForm, password: event.target.value })} />
+                  <label>Documento</label>
+                  <input value={props.customerRegisterForm.documentNumber} onChange={(event) => props.setCustomerRegisterForm({ ...props.customerRegisterForm, documentNumber: event.target.value })} />
+                  <label>Teléfono</label>
+                  <input value={props.customerRegisterForm.phone} onChange={(event) => props.setCustomerRegisterForm({ ...props.customerRegisterForm, phone: event.target.value })} />
+                  <button onClick={props.onCustomerRegister} disabled={busy}>Crear cuenta</button>
+                </div>
+              </div>
+            ) : (
+              <div className="employee-login-full">
+                <p>Acceso reservado para personal de aeropuerto, aerolínea, supervisión, control, seguridad y backoffice. Las credenciales no se muestran en pantalla y la contraseña debe cambiarse en el primer acceso.</p>
+                <label>Usuario</label>
+                <input value={props.employeeForm.username} onChange={(event) => props.setEmployeeForm({ ...props.employeeForm, username: event.target.value })} />
+                <label>Contraseña</label>
+                <input type="password" value={props.employeeForm.password} onChange={(event) => props.setEmployeeForm({ ...props.employeeForm, password: event.target.value })} />
+                <label>Puesto o terminal</label>
+                <input value={props.employeeForm.terminalId} onChange={(event) => props.setEmployeeForm({ ...props.employeeForm, terminalId: event.target.value })} />
+                <button onClick={props.onEmployeeLogin} disabled={busy}>Abrir sesión corporativa</button>
+              </div>
+            )}
+            {error && <div className="alert-box modern">{error}</div>}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function CustomerPortal(props: {
+  area: CustomerArea;
+  searchResults: SearchFlight[];
+  search: { originCode: string; destinationCode: string; date: string };
+  setSearch: (value: { originCode: string; destinationCode: string; date: string }) => void;
+  statusMessage: string;
+  busy: boolean;
+  documentPreview: DocumentPayload | null;
+  onSearchFlights: () => void;
+  onReserve: (flightId: string) => void;
+  onCheckin: (bookingId: string) => void;
+  onLogout: () => void;
+}) {
+  return (
+    <div className="customer-shell">
+      <header className="customer-header">
+        <div>
+          <div className="public-brand-name">Área privada de clientes</div>
+          <div className="public-brand-sub">{props.area.account.fullName} · Nivel {props.area.account.loyaltyLevel}</div>
+        </div>
+        <div className="customer-header-actions">
+          <span className="status-pill">{props.statusMessage}</span>
+          <button onClick={props.onLogout}>Cerrar sesión</button>
+        </div>
+      </header>
+
+      <div className="customer-grid">
+        <section className="customer-card">
+          <h3>Próximos vuelos</h3>
+          <DenseTable columns={["Localizador", "Vuelo", "Salida", "Estado", "Acción"]} rows={props.area.upcoming.map((booking) => [booking.locator, booking.flight.flightNumber, formatDateTime(booking.flight.scheduledDeparture), translateTicketStatus(booking.ticketStatus), booking.ticketStatus === "CHECKED_IN" ? "Tarjeta lista" : "Pendiente"])} />
+          <div className="action-row">
+            {props.area.upcoming.map((booking) => (
+              <button key={booking.id} onClick={() => props.onCheckin(booking.id)} disabled={props.busy}>
+                Check-in {booking.locator}
+              </button>
+            ))}
+          </div>
+        </section>
+
+        <section className="customer-card">
+          <h3>Buscar y reservar vuelos</h3>
+          <div className="search-grid">
+            <input value={props.search.originCode} onChange={(event) => props.setSearch({ ...props.search, originCode: event.target.value.toUpperCase() })} placeholder="Origen" />
+            <input value={props.search.destinationCode} onChange={(event) => props.setSearch({ ...props.search, destinationCode: event.target.value.toUpperCase() })} placeholder="Destino" />
+            <input type="date" value={props.search.date} onChange={(event) => props.setSearch({ ...props.search, date: event.target.value })} />
+            <button onClick={props.onSearchFlights}>Buscar</button>
+          </div>
+          <DenseTable columns={["Vuelo", "Ruta", "Salida", "Disponibles", "Precio"]} rows={props.searchResults.map((flight) => [flight.flightNumber, `${flight.origin}-${flight.destination}`, formatDateTime(flight.salida), String(flight.disponible), `${flight.precioBase} EUR`])} />
+          <div className="action-row">
+            {props.searchResults.slice(0, 6).map((flight) => <button key={flight.id} onClick={() => props.onReserve(flight.id)}>Reservar {flight.flightNumber}</button>)}
+          </div>
+        </section>
+
+        <section className="customer-card">
+          <h3>Mensajes y notificaciones</h3>
+          <div className="message-stack">
+            {props.area.messages.map((message) => (
+              <div key={message.id} className="message-panel">
+                <strong>{message.subject}</strong>
+                <span>{message.body}</span>
+                <small>{formatDateTime(message.createdAt)}</small>
+              </div>
+            ))}
+          </div>
+        </section>
+
+        <section className="customer-card">
+          <h3>Tarjeta de embarque digital</h3>
+          {props.documentPreview ? (
+            <DocumentPreviewCard documentPreview={props.documentPreview} />
+          ) : (
+            <div className="empty-state">Complete el check-in online para visualizar la tarjeta de embarque con QR y código de barras.</div>
+          )}
+        </section>
+      </div>
+    </div>
+  );
+}
+
+function EmployeePortal(props: {
+  employee: SessionUser;
+  screen: EmployeeScreen;
+  setScreen: (value: EmployeeScreen) => void;
+  statusMessage: string;
+  dashboard: DashboardData | null;
+  flights: Flight[];
+  selectedFlight: Flight | null;
+  setSelectedFlightId: (value: string) => void;
+  flightDetail: FlightDetail | null;
+  passengers: Passenger[];
+  passengerSearch: string;
+  setPassengerSearch: (value: string) => void;
+  incidents: Incident[];
+  messages: EmployeeMessage[];
+  customerAccounts: CustomerAccountAdmin[];
+  customerSearch: string;
+  setCustomerSearch: (value: string) => void;
+  fleet: Aircraft[];
+  audit: AuditLog[];
+  settings: SettingsPayload | null;
+  printHistory: PrintHistory[];
+  documentPreview: DocumentPayload | null;
+  busy: boolean;
+  onAssignSeat: (bookingId: string, seatNumber: string) => void;
+  onCheckin: (bookingId: string, seatNumber: string) => void;
+  onAddBag: (passengerId: string) => void;
+  onBoardPassenger: (bookingId: string) => void;
+  onUpgrade: (bookingId: string) => void;
+  onSimulateTick: () => void;
+  messageForm: { toEmployeeId: string; subject: string; body: string };
+  setMessageForm: (value: { toEmployeeId: string; subject: string; body: string }) => void;
+  onSendMessage: () => void;
+  onLogout: () => void;
+}) {
+  const screens = useMemo<EmployeeScreen[]>(() => {
+    const items: EmployeeScreen[] = ["dashboard", "vuelos", "pasajeros"];
+    if (props.employee.permissions.includes("checkin.ejecutar")) items.push("checkin");
+    if (props.employee.permissions.includes("embarque.gestionar")) items.push("embarque");
+    if (props.employee.permissions.includes("equipaje.gestionar")) items.push("equipaje");
+    if (props.employee.permissions.includes("upgrades.gestionar")) items.push("upgrades");
+    items.push("incidencias", "mensajeria", "clientes");
+    if (props.employee.permissions.includes("ajustes.ver")) items.push("flota", "auditoria", "ajustes");
+    return items;
+  }, [props.employee.permissions]);
+
+  return (
+    <div className="desktop">
       <div className="top-frame">
-        <div className="title-bar">SKYBRIDGE OPS / {airline?.commercialName.toUpperCase()} / {labels[screen]}</div>
-        <div className="menu-bar">File | Operations | Airline | Fleet | Print | Security | Audit | Window | Help</div>
+        <div className="title-bar">Centro operativo aeroportuario · Portal interno</div>
+        <div className="menu-bar">Archivo | Operativa | Facturación | Puerta | Incidencias | Documentos | Seguridad | Ayuda</div>
         <div className="status-strip">
-          <span>USER: {user?.fullName.toUpperCase()}</span>
-          <span>ROLE: {user?.role}</span>
-          <span>TERMINAL: {user?.terminalId}</span>
-          <span>STATUS: {statusMessage}</span>
-          <button className="logout-button" onClick={() => { setUser(null); navigate("public", "/"); }}>PUBLIC SITE</button>
+          <span>Usuario: {props.employee.fullName}</span>
+          <span>Perfil: {props.employee.role}</span>
+          <span>Puesto: {props.employee.terminalId}</span>
+          <span>Estado: {props.statusMessage}</span>
+          <button className="logout-button" onClick={props.onSimulateTick} disabled={props.busy}>Simulación viva</button>
+          <button className="logout-button" onClick={props.onLogout}>Salir</button>
         </div>
       </div>
 
       <div className="workspace">
         <aside className="sidebar">
           <div className="brand-box">
-            <img src="/branding/skybridge-logo.svg" alt="SkyBridge" className="sidebar-logo" />
-            <div className="brand-title small">{airline?.commercialName}</div>
-            <div className="brand-subtitle">{airline?.iataCode} / {airline?.icaoCode}</div>
+            <img src="/branding/skybridge-logo.svg" alt="Operativa" className="sidebar-logo" />
+            <div className="brand-title small">Operativa interna</div>
+            <div className="brand-subtitle">Control de aeropuerto y aerolínea</div>
           </div>
-          {allowedScreens.map((item) => <button key={item} className={screen === item ? "nav-button active" : "nav-button"} onClick={() => setScreen(item)}>{labels[item]}</button>)}
+          {screens.map((item) => (
+            <button key={item} className={props.screen === item ? "nav-button active" : "nav-button"} onClick={() => props.setScreen(item)}>
+              {labels[item]}
+            </button>
+          ))}
         </aside>
 
         <main className="main-panel">
-          {error && <div className="alert-box">{error}</div>}
-          {screen === "dashboard" && dashboard && <div className="module-grid"><Window title="OPERATIVE INDICATORS"><div className="kpi-grid">{Object.entries(dashboard.summary).map(([key, value]) => <div key={key} className="kpi-card"><div className="kpi-label">{key.toUpperCase()}</div><div className="kpi-value">{value}</div></div>)}</div></Window><Window title="TODAY FLIGHT OCCUPANCY"><DenseTable columns={["FLT", "GATE", "STATUS", "LOAD"]} rows={dashboard.occupancyByFlight.map((flight) => [flight.flightNumber, flight.gate, flight.status, flight.occupancy])} /></Window><Window title="INCIDENT REGISTER"><DenseTable columns={["TYPE", "SEVERITY", "DESCRIPTION"]} rows={dashboard.incidents.map((incident) => [incident.type, incident.severity, incident.description])} /></Window><Window title="OPS MESSAGES"><ul className="message-list">{dashboard.notifications.map((note) => <li key={note}>{note}</li>)}</ul></Window></div>}
-          {screen === "flights" && <div className="module-grid flights-grid"><Window title="FLIGHT MASTER LIST"><DenseTable columns={["FLT", "ROUTE", "STD", "ETD", "STATUS", "GATE", "A/C", "PAX"]} rows={flights.map((flight) => [flight.flightNumber, `${flight.origin.code}-${flight.destination.code}`, formatDateTime(flight.scheduledAt), formatDateTime(flight.estimatedAt), flight.status, flight.gate?.code ?? "TBD", flight.aircraft?.registration ?? "UNASSIGNED", `${flight.passengerCount}/${flight.occupancyLimit}`])} /></Window>{selectedFlight && <><Window title={`SEAT MAP / ${selectedFlight.flightNumber}`}>{seatMap && <SeatMapView seatMap={seatMap} onSeatSelect={(seatNumber) => { const booking = selectedFlight.bookings.find((item) => !item.seatNumber); if (booking) assignSeat(booking.id, seatNumber); }} />}</Window><Window title="BOOKING FLOW MONITOR"><DenseTable columns={["LOC", "PAX", "CLASS", "SEAT", "STATUS", "ACTION"]} rows={selectedFlight.bookings.map((booking) => [booking.locator, `${booking.passenger.firstName} ${booking.passenger.lastName}`, booking.cabinClass, booking.seatNumber ?? "UNASSIGNED", booking.ticketStatus, booking.seatNumber ? "READY" : "ASSIGN"])} /></Window></>}</div>}
-          {screen === "passengers" && <div className="module-grid"><Window title="PASSENGER SEARCH"><div className="toolbar"><label>FILTER</label><input value={search} onChange={(event) => setSearch(event.target.value)} /></div><DenseTable columns={["NAME", "DOC", "NAT", "LATEST BOOKING", "BAGS", "NOTES"]} rows={filteredPassengers.map((passenger) => [`${passenger.firstName} ${passenger.lastName}`, passenger.documentNumber, passenger.nationality, passenger.bookings[0]?.locator ?? "NONE", String(passenger.baggageItems.length), passenger.operationalNotes ?? ""])} /></Window></div>}
-          {screen === "checkin" && selectedFlight && <div className="module-grid flights-grid"><Window title={`CHECK-IN DESK / ${selectedFlight.flightNumber}`}><DenseTable columns={["LOC", "PAX", "DOC", "SEAT", "STATUS", "TASKS"]} rows={selectedFlight.bookings.map((booking) => [booking.locator, `${booking.passenger.firstName} ${booking.passenger.lastName}`, booking.passenger.documentNumber, booking.seatNumber ?? "REQ", booking.ticketStatus, "CHK-IN / BAG / PRINT"])} /><div className="action-row">{selectedFlight.bookings.map((booking) => <button key={booking.id} onClick={() => performCheckin(booking.id, booking.seatNumber ?? "9A")}>CHECK-IN {booking.locator}</button>)}</div><div className="action-row">{selectedFlight.bookings.map((booking) => <button key={booking.passenger.documentNumber} className="secondary" onClick={() => { const passenger = passengers.find((item) => item.documentNumber === booking.passenger.documentNumber); if (passenger) addBag(passenger.id); }}>BAG {booking.locator}</button>)}</div></Window><Window title="LIVE SEAT MAP">{seatMap && <SeatMapView seatMap={seatMap} onSeatSelect={(seatNumber) => { const pending = selectedFlight.bookings.find((booking) => !booking.seatNumber); if (pending) assignSeat(pending.id, seatNumber); }} />}</Window><Window title="THERMAL PRINT PREVIEW"><PrintPreviewPanel preview={printPreview} /></Window></div>}
-          {screen === "boarding" && selectedFlight && <div className="module-grid"><Window title={`GATE CONTROL / ${selectedFlight.flightNumber}`}><DenseTable columns={["LOC", "PAX", "STATUS", "SEAT", "BOARD"]} rows={selectedFlight.bookings.map((booking) => [booking.locator, `${booking.passenger.firstName} ${booking.passenger.lastName}`, booking.ticketStatus, booking.seatNumber ?? "UNASSIGNED", booking.ticketStatus === "CHECKED_IN" ? "ALLOW" : "BLOCK"])} /><div className="action-row">{selectedFlight.bookings.map((booking) => <button key={booking.id} onClick={() => boardPassenger(booking.id)}>BOARD {booking.locator}</button>)}</div></Window></div>}
-          {screen === "upgrades" && <div className="module-grid"><Window title="UPGRADES / OVERBOOKING HANDLER"><DenseTable columns={["LOC", "PAX", "FLT", "FROM", "TO", "SEAT", "REASON", "AGENT"]} rows={upgrades.map((upgrade) => [upgrade.booking.locator, `${upgrade.booking.passenger.firstName} ${upgrade.booking.passenger.lastName}`, upgrade.booking.flight.flightNumber, upgrade.fromClass, upgrade.toClass, upgrade.newSeat ?? "-", upgrade.reason, upgrade.employee.fullName])} />{flights[0] && <div className="action-row">{flights[0].bookings.map((booking) => <button key={booking.id} onClick={() => createUpgrade(booking.id)}>UPGRADE {booking.locator}</button>)}</div>}</Window></div>}
-          {screen === "fleet" && <div className="module-grid"><Window title="AIRCRAFT REGISTRY"><DenseTable columns={["REG", "MODEL", "MAKER", "CAP", "STATUS", "ASSIGNED FLIGHTS"]} rows={fleet.map((item) => [item.registration, item.model, item.manufacturer, String(item.seatCapacity), item.status, item.flights.map((flight) => flight.flightNumber).join(", ")])} /></Window>{fleet[0] && <Window title={`CABIN CONFIG / ${fleet[0].registration}`}><pre className="config-json">{JSON.stringify(JSON.parse(fleet[0].cabinConfigJson), null, 2)}</pre></Window>}</div>}
-          {screen === "audit" && <div className="module-grid"><Window title="EMPLOYEE AUDIT TRAIL"><DenseTable columns={["DATE", "EMPLOYEE", "ACTION", "ENTITY", "TERMINAL"]} rows={audit.map((item) => [formatDateTime(item.createdAt), item.user.employee?.fullName ?? "UNKNOWN", item.action, item.entityType, item.terminalId])} /></Window></div>}
-          {screen === "settings" && settings && <div className="module-grid"><Window title="AIRLINE BRANDING / SETTINGS"><div className="settings-grid"><div><strong>Name:</strong> {settings.airline.commercialName}</div><div><strong>IATA:</strong> {settings.airline.iataCode}</div><div><strong>ICAO:</strong> {settings.airline.icaoCode}</div><div><strong>Ticket Prefix:</strong> {settings.airline.ticketPrefix}</div><div><strong>Baggage:</strong> {settings.airline.baggagePolicy}</div><div><strong>Upgrade:</strong> {settings.airline.upgradePolicy}</div></div></Window><Window title="PRINTER PROFILES"><DenseTable columns={["TERMINAL", "PRINTER", "DRIVER", "WIDTH"]} rows={settings.printerProfiles.map((profile) => [profile.terminalName, profile.printerName, profile.driverType, `${profile.paperWidth} mm`])} /></Window></div>}
+          {props.screen === "dashboard" && props.dashboard && (
+            <div className="module-grid">
+              <Window title="KPIs operativos">
+                <div className="kpi-grid">
+                  {Object.entries(props.dashboard.summary).map(([key, value]) => (
+                    <div key={key} className="kpi-card">
+                      <div className="kpi-label">{translateSummaryKey(key)}</div>
+                      <div className="kpi-value">{value}</div>
+                    </div>
+                  ))}
+                </div>
+              </Window>
+              <Window title="Actividad reciente">
+                <DenseTable columns={["Acción", "Hora"]} rows={(props.dashboard.actividadReciente ?? []).map((item) => [translateAuditAction(item.action), formatDateTime(item.createdAt)])} />
+              </Window>
+              <Window title="Ocupación y carga">
+                <DenseTable columns={["Vuelo", "Puerta", "Estado", "Ocupación"]} rows={props.dashboard.occupancyByFlight.map((item) => [item.flightNumber, item.gate, translateFlightStatus(item.status), item.occupancy])} />
+              </Window>
+              <Window title="Alertas del sistema">
+                <ul className="message-list">{props.dashboard.notifications.map((note) => <li key={note}>{note}</li>)}</ul>
+              </Window>
+            </div>
+          )}
+
+          {props.screen === "vuelos" && (
+            <div className="module-grid flights-grid">
+              <Window title="Listado de vuelos">
+                <DenseTable columns={["Vuelo", "Ruta", "STD", "ETD", "Estado", "Pax", "Bags"]} rows={props.flights.map((flight) => [flight.flightNumber, `${flight.origin?.code}-${flight.destination?.code}`, formatDateTime(flight.scheduledDeparture), formatDateTime(flight.estimatedDeparture), translateFlightStatus(flight.status), String(flight.passengerCount), String(flight.baggageCount)])} />
+                <div className="action-row">{props.flights.slice(0, 8).map((flight) => <button key={flight.id} onClick={() => props.setSelectedFlightId(flight.id)}>{flight.flightNumber}</button>)}</div>
+              </Window>
+              <Window title="Detalle del vuelo">
+                {props.flightDetail ? <FlightDetailPanel flight={props.flightDetail} /> : <div className="empty-state">Seleccione un vuelo.</div>}
+              </Window>
+            </div>
+          )}
+
+          {props.screen === "pasajeros" && (
+            <div className="module-grid">
+              <Window title="Ficha de pasajeros">
+                <div className="toolbar">
+                  <label>Buscar</label>
+                  <input value={props.passengerSearch} onChange={(event) => props.setPassengerSearch(event.target.value)} placeholder="Nombre, apellidos o documento" />
+                </div>
+                <DenseTable columns={["Nombre", "Documento", "Tipo", "Verificado", "Asistencia", "Reserva"]} rows={props.passengers.map((passenger) => [`${passenger.firstName} ${passenger.lastName}`, passenger.documentNumber, passenger.type, passenger.documentVerified ? "Sí" : "No", passenger.assistanceRequired ? "Sí" : "No", passenger.bookings[0]?.locator ?? "-"])} />
+              </Window>
+            </div>
+          )}
+
+          {props.screen === "checkin" && props.selectedFlight && (
+            <div className="module-grid flights-grid">
+              <Window title={`Check-in mostrador · ${props.selectedFlight.flightNumber}`}>
+                <DenseTable columns={["Localizador", "Pasajero", "Asiento", "Estado", "Acción"]} rows={props.selectedFlight.bookings.map((booking) => [booking.locator, `${booking.passenger.firstName} ${booking.passenger.lastName}`, booking.seatNumber ?? "Por asignar", translateTicketStatus(booking.ticketStatus), translateTicketStatus(booking.ticketStatus)])} />
+                <div className="action-row">{props.selectedFlight.bookings.slice(0, 8).map((booking) => <button key={booking.id} onClick={() => props.onCheckin(booking.id, booking.seatNumber ?? "10A")}>Facturar {booking.locator}</button>)}</div>
+              </Window>
+              <Window title="Mapa visual de asientos">
+                {props.flightDetail ? <SeatMapView detail={props.flightDetail} onAssignSeat={props.onAssignSeat} /> : <div className="empty-state">Cargando cabina...</div>}
+              </Window>
+            </div>
+          )}
+
+          {props.screen === "embarque" && props.selectedFlight && (
+            <div className="module-grid">
+              <Window title={`Puerta de embarque · ${props.selectedFlight.flightNumber}`}>
+                <DenseTable columns={["Localizador", "Pasajero", "Estado", "Grupo", "Asiento"]} rows={props.selectedFlight.bookings.map((booking) => [booking.locator, `${booking.passenger.firstName} ${booking.passenger.lastName}`, translateTicketStatus(booking.ticketStatus), "Operativo", booking.seatNumber ?? "-"])} />
+                <div className="action-row">{props.selectedFlight.bookings.slice(0, 8).map((booking) => <button key={booking.id} onClick={() => props.onBoardPassenger(booking.id)}>Embarcar {booking.locator}</button>)}</div>
+              </Window>
+            </div>
+          )}
+
+          {props.screen === "equipaje" && (
+            <div className="module-grid">
+              <Window title="Impresiones y equipaje">
+                {props.selectedFlight && <div className="action-row">{props.selectedFlight.bookings.slice(0, 8).map((booking) => <button key={booking.id} onClick={() => props.onAddBag(booking.passenger.id)}>Maleta {booking.locator}</button>)}</div>}
+                <DenseTable columns={["Tipo", "Modo", "Copias", "Fecha", "Usuario"]} rows={props.printHistory.map((item) => [item.type, item.mode, String(item.copies), formatDateTime(item.createdAt), item.user?.username ?? "Sistema"])} />
+              </Window>
+              <Window title="Vista previa de documento">
+                {props.documentPreview ? (
+                  <DocumentPreviewCard documentPreview={props.documentPreview} />
+                ) : <div className="empty-state">Genere un check-in o una reimpresión para visualizar el documento.</div>}
+              </Window>
+            </div>
+          )}
+
+          {props.screen === "upgrades" && props.selectedFlight && (
+            <div className="module-grid">
+              <Window title="Control comercial y sobreventa">
+                <DenseTable columns={["Localizador", "Pasajero", "Cabina", "Estado", "Upgrade"]} rows={props.selectedFlight.bookings.map((booking) => [booking.locator, `${booking.passenger.firstName} ${booking.passenger.lastName}`, translateCabinClass(booking.cabinClass), translateTicketStatus(booking.ticketStatus), translateTicketStatus(booking.ticketStatus)])} />
+                <div className="action-row">{props.selectedFlight.bookings.slice(0, 6).map((booking) => <button key={booking.id} onClick={() => props.onUpgrade(booking.id)}>Upgrade {booking.locator}</button>)}</div>
+              </Window>
+            </div>
+          )}
+
+          {props.screen === "incidencias" && (
+            <div className="module-grid">
+              <Window title="Registro de incidencias">
+                <DenseTable columns={["Ámbito", "Tipo", "Prioridad", "Estado", "Descripción"]} rows={props.incidents.map((incident) => [incident.scope, incident.type, incident.severity, incident.status, incident.description])} />
+              </Window>
+            </div>
+          )}
+
+          {props.screen === "mensajeria" && (
+            <div className="module-grid">
+              <Window title="Mensajería interna">
+                <DenseTable columns={["Asunto", "Prioridad", "Canal", "Fecha"]} rows={props.messages.map((message) => [message.subject, message.priority, message.channel, formatDateTime(message.createdAt)])} />
+              </Window>
+              <Window title="Redactar mensaje">
+                <label>ID empleado destino</label>
+                <input value={props.messageForm.toEmployeeId} onChange={(event) => props.setMessageForm({ ...props.messageForm, toEmployeeId: event.target.value })} />
+                <label>Asunto</label>
+                <input value={props.messageForm.subject} onChange={(event) => props.setMessageForm({ ...props.messageForm, subject: event.target.value })} />
+                <label>Mensaje</label>
+                <textarea className="editor-box" value={props.messageForm.body} onChange={(event) => props.setMessageForm({ ...props.messageForm, body: event.target.value })} />
+                <button onClick={props.onSendMessage}>Enviar mensaje</button>
+              </Window>
+            </div>
+          )}
+
+          {props.screen === "clientes" && (
+            <div className="module-grid">
+              <Window title="Clientes registrados">
+                <div className="toolbar">
+                  <label>Buscar</label>
+                  <input value={props.customerSearch} onChange={(event) => props.setCustomerSearch(event.target.value)} placeholder="Cliente o correo" />
+                </div>
+                <DenseTable columns={["Cliente", "Correo", "Nacionalidad", "Nivel", "Mensajes"]} rows={props.customerAccounts.map((account) => [account.fullName, account.email, account.nationality, account.profile?.loyaltyLevel ?? "BÁSICO", String(account.messagesUnread)])} />
+              </Window>
+            </div>
+          )}
+
+          {props.screen === "flota" && (
+            <div className="module-grid">
+              <Window title="Flota y cabinas">
+                <DenseTable columns={["Matrícula", "Modelo", "Fabricante", "Capacidad", "Estado", "Vuelos"]} rows={props.fleet.map((item) => [item.registration, item.model, item.manufacturer, String(item.seatCapacity), item.status, item.flights.map((flight) => flight.flightNumber).join(", ")])} />
+              </Window>
+            </div>
+          )}
+
+          {props.screen === "auditoria" && (
+            <div className="module-grid">
+              <Window title="Auditoría de actividad">
+                <DenseTable columns={["Fecha", "Empleado", "Acción", "Entidad", "Terminal", "Crítico"]} rows={props.audit.map((item) => [formatDateTime(item.createdAt), item.user.employee?.fullName ?? "Sistema", translateAuditAction(item.action), item.entityType, item.terminalId, item.critical ? "Sí" : "No"])} />
+              </Window>
+            </div>
+          )}
+
+          {props.screen === "ajustes" && props.settings && (
+            <div className="module-grid">
+              <Window title="Administración general">
+                <DenseTable columns={["Aeropuerto", "Terminales", "Puertas", "Mostradores", "Sesiones"]} rows={[[props.settings.airports[0]?.name ?? "-", String(props.settings.terminals.length), String(props.settings.gates.length), String(props.settings.counters.length), props.settings.security.sesionesActivas.toString()]]} />
+                <DenseTable columns={["Usuario", "Cargo", "Rol", "Estado", "Cambio obligatorio"]} rows={props.settings.users.map((item) => [item.fullName, item.title, translateRole(item.user.role), translateRole(item.user.status), item.user.forcePasswordChange ? "Sí" : "No"])} />
+              </Window>
+              <Window title="Impresoras y seguridad">
+                <DenseTable columns={["Terminal", "Impresora", "Simulación"]} rows={props.settings.printerProfiles.map((item) => [item.terminalName, item.printerName, item.simulationMode ? "Sí" : "No"])} />
+              </Window>
+            </div>
+          )}
         </main>
       </div>
     </div>
   );
-}
-
-function Window({ title, children }: { title: string; children: ReactNode }) {
-  return <section className="window"><div className="window-title">{title}</div><div className="panel-content">{children}</div></section>;
-}
-
-function DenseTable({ columns, rows }: { columns: string[]; rows: string[][] }) {
-  return <table className="dense-table"><thead><tr>{columns.map((column) => <th key={column}>{column}</th>)}</tr></thead><tbody>{rows.map((row, index) => <tr key={`${row.join("-")}-${index}`}>{row.map((cell, cellIndex) => <td key={`${cell}-${cellIndex}`}>{cell}</td>)}</tr>)}</tbody></table>;
-}
-
-function SeatMapView({ seatMap, onSeatSelect }: { seatMap: SeatMapResponse; onSeatSelect: (seatNumber: string) => void }) {
-  return <div className="seat-map"><div className="seat-map-header"><div>{seatMap.aircraft?.registration}</div><div>{seatMap.aircraft?.model}</div></div><div className="seat-legend"><span className="legend free">FREE</span><span className="legend occupied">OCCUPIED</span><span className="legend exit">EXIT</span></div><div className="seat-grid">{groupSeats(seatMap.seatAssignments).map(([row, seats]) => <div key={row} className="seat-row"><div className="row-label">{row}</div>{seats.map((seat) => <button key={seat.id} className={`seat ${seat.state.toLowerCase()}`} onClick={() => onSeatSelect(seat.seatNumber)} disabled={seat.state === "OCCUPIED" || seat.state === "BLOCKED" || seat.state === "CREW"}>{seat.seatNumber}</button>)}</div>)}</div></div>;
-}
-
-function PrintPreviewPanel({ preview }: { preview: PrintPreview | null }) {
-  return <div className="print-preview"><div className="print-preview-box"><pre>{preview?.escpos ?? "NO PRINT JOB GENERATED"}</pre></div></div>;
 }
 
 export default App;

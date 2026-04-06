@@ -10,7 +10,7 @@ seatsRouter.get("/:flightId", requireAuth, async (req, res) => {
   res.json(flight);
 });
 
-seatsRouter.post("/assign", requireRole("ADMIN", "CHECKIN_AGENT", "SUPERVISOR", "CUSTOMER_SERVICE"), async (req, res) => {
+seatsRouter.post("/assign", requireRole("ADMIN_GENERAL", "ADMIN", "MOSTRADOR_FACTURACION", "CHECKIN_AGENT", "SUPERVISOR_AEROPUERTO", "SUPERVISOR_TURNO", "SUPERVISOR", "ATENCION_CLIENTE", "CUSTOMER_SERVICE"), async (req, res) => {
   const { bookingId, flightId, seatNumber } = req.body as {
     bookingId: string;
     flightId: string;
@@ -27,7 +27,7 @@ seatsRouter.post("/assign", requireRole("ADMIN", "CHECKIN_AGENT", "SUPERVISOR", 
   res.json(result.seat);
 });
 
-seatsRouter.post("/generate/:flightId", requireRole("ADMIN", "OPERATIONS", "FLEET_MANAGER"), async (req, res) => {
+seatsRouter.post("/generate/:flightId", requireRole("ADMIN_GENERAL", "ADMIN", "OPERACIONES", "OPERATIONS", "FLOTA", "FLEET_MANAGER"), async (req, res) => {
   const flight = store.getSeatMap(String(req.params.flightId));
   if (!flight?.aircraft) {
     return res.status(400).json({ message: "Vuelo sin aeronave asignada." });

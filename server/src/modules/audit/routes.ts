@@ -4,6 +4,6 @@ import { store } from "../../lib/store.js";
 
 export const auditRouter = Router();
 
-auditRouter.get("/", requireRole("ADMIN", "SUPERVISOR"), async (_req, res) => {
+auditRouter.get("/", requireRole("ADMIN_GENERAL", "ADMIN", "SUPERVISOR_AEROPUERTO", "SUPERVISOR", "SEGURIDAD_AUDITORIA"), async (_req, res) => {
   res.json(store.getAudit());
 });

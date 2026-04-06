@@ -10,6 +10,13 @@ declare module "express-session" {
       employeeId: string;
       fullName: string;
       terminalId: string;
+      permissions: string[];
+      forcePasswordChange: boolean;
+    };
+    customer?: {
+      id: string;
+      email: string;
+      fullName: string;
     };
   }
 }
