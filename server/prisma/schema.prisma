@@ -1,0 +1,349 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+enum UserRole {
+  ADMIN
+  CHECKIN_AGENT
+  GATE_AGENT
+  SUPERVISOR
+  OPERATIONS
+  FLEET_MANAGER
+  CUSTOMER_SERVICE
+}
+
+enum TicketStatus {
+  RESERVED
+  ISSUED
+  CHECKED_IN
+  BOARDED
+  CANCELLED
+  NO_SHOW
+}
+
+enum FlightStatus {
+  SCHEDULED
+  CHECKIN_OPEN
+  BOARDING
+  GATE_CLOSED
+  DEPARTED
+  DELAYED
+  CANCELLED
+  COMPLETED
+}
+
+enum BoardingStatus {
+  PENDING
+  BOARDED
+  DENIED
+}
+
+enum SeatState {
+  FREE
+  OCCUPIED
+  BLOCKED
+  CREW
+  EXIT_ROW
+}
+
+enum CabinClass {
+  BUSINESS
+  PREMIUM_ECONOMY
+  ECONOMY
+}
+
+enum BaggageStatus {
+  CHECKED
+  LOADED
+  CLAIMED
+}
+
+model User {
+  id            String        @id @default(cuid())
+  username      String        @unique
+  passwordHash  String
+  role          UserRole
+  active        Boolean       @default(true)
+  lastAccessAt  DateTime?
+  employee      Employee?
+  accessLogs    AccessLog[]
+  auditLogs     AuditLog[]
+  printerConfig PrinterProfile[]
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+}
+
+model Employee {
+  id           String    @id @default(cuid())
+  fullName     String
+  stationCode  String
+  title        String
+  userId       String    @unique
+  user         User      @relation(fields: [userId], references: [id])
+  incidents    Incident[]
+  checkins     Checkin[]
+  boardings    Boarding[]
+  baggageItems Baggage[]
+  upgrades     Upgrade[]
+}
+
+model AccessLog {
+  id         String   @id @default(cuid())
+  userId     String
+  user       User     @relation(fields: [userId], references: [id])
+  loginAt    DateTime @default(now())
+  terminalId String
+  ipAddress  String?
+}
+
+model Airline {
+  id                   String           @id @default(cuid())
+  commercialName       String
+  iataCode             String           @unique
+  icaoCode             String           @unique
+  logoUrl              String
+  ticketPrefix         String
+  baggagePolicy        String
+  upgradePolicy        String
+  colorPrimary         String
+  colorAccent          String
+  airports             Airport[]
+  flights              Flight[]
+  printerProfiles      PrinterProfile[]
+  settings             Setting[]
+}
+
+model Airport {
+  id          String   @id @default(cuid())
+  code        String   @unique
+  icaoCode    String   @unique
+  name        String
+  city        String
+  country     String
+  airlineId   String
+  airline     Airline  @relation(fields: [airlineId], references: [id])
+  originFor   Flight[] @relation("FlightOrigin")
+  destinationFor Flight[] @relation("FlightDestination")
+  gates       Gate[]
+}
+
+model Gate {
+  id          String   @id @default(cuid())
+  code        String
+  terminal    String
+  active      Boolean  @default(true)
+  airportId   String
+  airport     Airport  @relation(fields: [airportId], references: [id])
+  flights     Flight[]
+}
+
+model Aircraft {
+  id              String        @id @default(cuid())
+  registration    String        @unique
+  model           String
+  manufacturer    String
+  seatCapacity    Int
+  cabinConfigJson String
+  status          String
+  maintenanceNote String?
+  flights         Flight[]
+}
+
+model Flight {
+  id                String         @id @default(cuid())
+  airlineId         String
+  airline           Airline        @relation(fields: [airlineId], references: [id])
+  flightNumber      String         @unique
+  originId          String
+  destinationId     String
+  origin            Airport        @relation("FlightOrigin", fields: [originId], references: [id])
+  destination       Airport        @relation("FlightDestination", fields: [destinationId], references: [id])
+  scheduledAt       DateTime
+  estimatedAt       DateTime
+  status            FlightStatus
+  gateId            String?
+  gate              Gate?          @relation(fields: [gateId], references: [id])
+  aircraftId        String?
+  aircraft          Aircraft?      @relation(fields: [aircraftId], references: [id])
+  occupancyLimit    Int
+  overbookLimit     Int            @default(0)
+  operationalNotes  String?
+  incidents         Incident[]
+  bookings          Booking[]
+  seatAssignments   SeatAssignment[]
+  checkins          Checkin[]
+  boardings         Boarding[]
+  baggageItems      Baggage[]
+  upgrades          Upgrade[]
+  createdAt         DateTime       @default(now())
+}
+
+model Passenger {
+  id               String     @id @default(cuid())
+  firstName        String
+  lastName         String
+  birthDate        DateTime
+  documentNumber   String
+  nationality      String
+  contactEmail     String
+  contactPhone     String
+  operationalNotes String?
+  bookings         Booking[]
+  baggageItems     Baggage[]
+}
+
+model Booking {
+  id                 String       @id @default(cuid())
+  locator            String       @unique
+  passengerId        String
+  passenger          Passenger    @relation(fields: [passengerId], references: [id])
+  flightId           String
+  flight             Flight       @relation(fields: [flightId], references: [id])
+  fareName           String
+  cabinClass         CabinClass
+  seatNumber         String?
+  baggageIncluded    Int
+  ticketStatus       TicketStatus
+  refundable         Boolean
+  upgradeAvailable   Boolean      @default(false)
+  checkedInAt        DateTime?
+  boardedAt          DateTime?
+  remarks            String?
+  createdAt          DateTime     @default(now())
+  checkin            Checkin?
+  boarding           Boarding?
+  ticket             Ticket?
+  upgrades           Upgrade[]
+}
+
+model Ticket {
+  id            String       @id @default(cuid())
+  number        String       @unique
+  bookingId     String       @unique
+  booking       Booking      @relation(fields: [bookingId], references: [id])
+  status        TicketStatus
+  issuedAt      DateTime
+}
+
+model Checkin {
+  id              String    @id @default(cuid())
+  bookingId       String    @unique
+  booking         Booking   @relation(fields: [bookingId], references: [id])
+  flightId        String
+  flight          Flight    @relation(fields: [flightId], references: [id])
+  employeeId      String
+  employee        Employee  @relation(fields: [employeeId], references: [id])
+  assignedSeat    String
+  checkedAt       DateTime  @default(now())
+  documentAlert   String?
+}
+
+model Baggage {
+  id             String        @id @default(cuid())
+  passengerId    String
+  passenger      Passenger     @relation(fields: [passengerId], references: [id])
+  flightId       String
+  flight         Flight        @relation(fields: [flightId], references: [id])
+  employeeId     String
+  employee       Employee      @relation(fields: [employeeId], references: [id])
+  bagTag         String        @unique
+  pieces         Int
+  totalWeightKg  Float
+  excessFee      Float         @default(0)
+  status         BaggageStatus
+  barcode        String
+  printedAt      DateTime?
+  createdAt      DateTime      @default(now())
+}
+
+model Boarding {
+  id            String         @id @default(cuid())
+  bookingId     String         @unique
+  booking       Booking        @relation(fields: [bookingId], references: [id])
+  flightId      String
+  flight        Flight         @relation(fields: [flightId], references: [id])
+  employeeId    String
+  employee      Employee       @relation(fields: [employeeId], references: [id])
+  status        BoardingStatus
+  boardedAt     DateTime?
+  manualOverride Boolean       @default(false)
+}
+
+model SeatAssignment {
+  id          String      @id @default(cuid())
+  flightId    String
+  flight      Flight      @relation(fields: [flightId], references: [id])
+  seatNumber  String
+  cabinClass  CabinClass
+  state       SeatState
+  bookingId   String?
+  createdAt   DateTime    @default(now())
+}
+
+model Upgrade {
+  id            String      @id @default(cuid())
+  bookingId      String
+  booking        Booking     @relation(fields: [bookingId], references: [id])
+  flightId       String
+  flight         Flight      @relation(fields: [flightId], references: [id])
+  employeeId     String
+  employee       Employee    @relation(fields: [employeeId], references: [id])
+  fromClass      CabinClass
+  toClass        CabinClass
+  reason         String
+  newSeat        String?
+  price          Float       @default(0)
+  createdAt      DateTime    @default(now())
+}
+
+model PrinterProfile {
+  id               String   @id @default(cuid())
+  airlineId        String
+  airline          Airline  @relation(fields: [airlineId], references: [id])
+  userId           String
+  user             User     @relation(fields: [userId], references: [id])
+  terminalName     String
+  printerName      String
+  driverType       String
+  paperWidth       Int
+  isDefault        Boolean  @default(false)
+}
+
+model Incident {
+  id           String    @id @default(cuid())
+  flightId      String?
+  flight        Flight?  @relation(fields: [flightId], references: [id])
+  employeeId    String?
+  employee      Employee? @relation(fields: [employeeId], references: [id])
+  type          String
+  severity      String
+  description   String
+  createdAt     DateTime @default(now())
+}
+
+model AuditLog {
+  id             String   @id @default(cuid())
+  userId         String
+  user           User     @relation(fields: [userId], references: [id])
+  action         String
+  entityType     String
+  entityId       String
+  terminalId     String
+  previousData   String?
+  nextData       String?
+  createdAt      DateTime @default(now())
+}
+
+model Setting {
+  id          String   @id @default(cuid())
+  airlineId   String
+  airline     Airline  @relation(fields: [airlineId], references: [id])
+  category    String
+  key         String
+  value       String
+}

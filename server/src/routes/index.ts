@@ -1,0 +1,36 @@
+import { Router } from "express";
+import { authRouter } from "../modules/auth/routes.js";
+import { dashboardRouter } from "../modules/dashboard/routes.js";
+import { employeesRouter } from "../modules/employees/routes.js";
+import { flightsRouter } from "../modules/flights/routes.js";
+import { passengersRouter } from "../modules/passengers/routes.js";
+import { bookingsRouter } from "../modules/bookings/routes.js";
+import { checkinRouter } from "../modules/checkin/routes.js";
+import { baggageRouter } from "../modules/baggage/routes.js";
+import { boardingRouter } from "../modules/boarding/routes.js";
+import { seatsRouter } from "../modules/seats/routes.js";
+import { upgradesRouter } from "../modules/upgrades/routes.js";
+import { fleetRouter } from "../modules/fleet/routes.js";
+import { auditRouter } from "../modules/audit/routes.js";
+import { settingsRouter } from "../modules/settings/routes.js";
+import { printingRouter } from "../modules/printing/routes.js";
+import { publicRouter } from "../modules/public/routes.js";
+
+export const apiRouter = Router();
+
+apiRouter.use("/auth", authRouter);
+apiRouter.use("/public", publicRouter);
+apiRouter.use("/dashboard", dashboardRouter);
+apiRouter.use("/employees", employeesRouter);
+apiRouter.use("/flights", flightsRouter);
+apiRouter.use("/passengers", passengersRouter);
+apiRouter.use("/bookings", bookingsRouter);
+apiRouter.use("/checkin", checkinRouter);
+apiRouter.use("/baggage", baggageRouter);
+apiRouter.use("/boarding", boardingRouter);
+apiRouter.use("/seats", seatsRouter);
+apiRouter.use("/upgrades", upgradesRouter);
+apiRouter.use("/fleet", fleetRouter);
+apiRouter.use("/audit", auditRouter);
+apiRouter.use("/settings", settingsRouter);
+apiRouter.use("/printing", printingRouter);
